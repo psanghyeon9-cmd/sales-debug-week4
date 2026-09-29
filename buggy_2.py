@@ -1,26 +1,61 @@
-# -*- coding: utf-8 -*-
-"""
-buggy_2.py  ―  카테고리별 매출 집계 (pandas 버전)
-
-dirty_sales.csv를 pandas로 읽어 카테고리별 매출 합계를 구하려 한다.
-그런데 실행하자마자 죽는다.
-
-[과제] Traceback을 얻어 예외 타입을 확인하고,
-       '원인을 데이터에서 직접 확인'한 뒤(힌트: 실제 컬럼명이 무엇인가?)
-       코드를 수정하라.
-"""
+from pathlib import Path
 import pandas as pd
 
+MAX_PRICE = 100_000
+MAX_QUANTITY = 1_000
+
+
 def load(path):
-    df = pd.read_csv(path, encoding="utf-8")
-    return df
+    return pd.read_csv(path, encoding="utf-8")
+
 
 def summarize(df):
-    # 단가 x 수량으로 매출액 컬럼을 만든 뒤 카테고리별 합계를 낸다
-    df["매출액"] = df["단가"] * df["수량"]        # <-- 여기가 문제의 줄
-    return df.groupby("category")["매출액"].sum()
+    df = df.copy()
+
+    price_text = (
+        df["price"].astype("string")
+        .str.replace(",", "", regex=False)
+        .str.replace("원", "", regex=False)
+        .str.strip()
+    )
+    df["price"] = pd.to_numeric(
+        price_text, errors="raise"
+    ).astype("Int64")
+
+    df["quantity"] = pd.to_numeric(
+        df["quantity"], errors="raise"
+    ).astype("Int64")
+
+    missing_price = df["price"].isna()
+    valid = (
+        df["price"].between(1, MAX_PRICE)
+        & df["quantity"].between(1, MAX_QUANTITY)
+    ).fillna(False)
+
+    print(f"집계 행 수: {int(valid.sum())}")
+    print(f"가격 결측 제외: {int(missing_price.sum())}건")
+    print(
+        "가격/수량 검토 대상 제외: "
+        f"{int((~valid & ~missing_price).sum())}건"
+    )
+    df = df.loc[valid].copy()
+
+    df["category"] = (
+        df["category"].astype("string").str.strip()
+        .replace("", pd.NA).fillna("미분류")
+    )
+
+    df["매출액"] = df["price"] * df["quantity"]
+    result = df.groupby("category")["매출액"].sum()
+
+    assert result.sum() == df["매출액"].sum(), "카테고리 집계에서 매출 누락"
+    return result
+
 
 if __name__ == "__main__":
-    df = load("dirty_sales.csv")
-    result = summarize(df)
-    print(result)
+    input_path = Path(__file__).resolve().parent / "dirty_sales.csv"
+    result = summarize(load(input_path))
+
+    print("\n카테고리별 유효 거래 매출:")
+    print(result.to_string())
+    print(f"\n유효 거래 매출 합계: {result.sum():,}원")
