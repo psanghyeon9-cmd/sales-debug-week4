@@ -1,39 +1,70 @@
-# -*- coding: utf-8 -*-
-"""
-buggy_4.py  ―  총 매출액 집계 (에러 없이 '조용히' 틀리는 스크립트)
-
-이 스크립트는 에러 없이 잘 돌아가고, 그럴듯한 숫자를 출력한다.
-하지만 그 숫자는 '틀렸다'.
-
-[과제] 이 스크립트는 예외를 던지지 않는다. 대신
-       (1) info()/describe()로 데이터 상태를 먼저 세어 보고
-       (2) '무엇이 틀렸는지 어떻게 알아챘는지'를 서술한 뒤
-       (3) 결측 규모를 보고하고 처리 방법을 선택·적용하여
-           올바른 총매출을 산출하라.
-       (힌트: 가격 결측은 몇 건인가? 음수 가격과 9999999 같은 값은 정상인가?)
-"""
+from pathlib import Path
 import pandas as pd
 
-def main():
-    df = pd.read_csv("dirty_sales.csv", encoding="utf-8")
+MAX_PRICE = 100_000
+MAX_QUANTITY = 1_000
 
-    # price를 숫자로 바꾼다 (빈 값은 NaN이 된다 — 그런데 그 규모를 확인하지 않았다)
-    df["price"] = (df["price"].astype(str)
-                              .str.replace(",", "")
-                              .str.replace("원", "")
-                              .str.strip())
-    df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
-    # 매출액 = 단가 x 수량 (NaN이 섞이면 그 행의 매출액도 NaN)
+def load_and_clean(path):
+    df = pd.read_csv(path, encoding="utf-8")
+
+    # FIXED: 집계 전에 원본 데이터의 결측 규모를 보고한다.
+    print(f"원본 행 수: {len(df)}")
+    print("\n열별 결측치 수:")
+    print(df.isna().sum().to_string())
+
+    # FIXED: 가격 표기를 정리하고 결측을 유지하며 숫자로 변환한다.
+    price_text = (
+        df["price"].astype("string")
+        .str.replace(",", "", regex=False)
+        .str.replace("원", "", regex=False)
+        .str.strip()
+    )
+    df["price"] = pd.to_numeric(
+        price_text, errors="raise"
+    ).astype("Int64")
+    df["quantity"] = pd.to_numeric(
+        df["quantity"], errors="raise"
+    ).astype("Int64")
+
+    # FIXED: 가격 결측과 설정 범위 밖의 거래를 구분하여 제외한다.
+    missing_price = df["price"].isna()
+    valid = (
+        df["price"].between(1, MAX_PRICE)
+        & df["quantity"].between(1, MAX_QUANTITY)
+    ).fillna(False)
+    review = ~valid & ~missing_price
+
+    print(f"\n가격 결측 제외: {int(missing_price.sum())}건")
+    print(f"가격/수량 검토 대상 제외: {int(review.sum())}건")
+
+    df = df.loc[valid].copy()
+
+    # FIXED: 카테고리 결측 때문에 유효 거래를 삭제하지 않는다.
+    df["category"] = (
+        df["category"].astype("string").str.strip()
+        .replace("", pd.NA).fillna("미분류")
+    )
+
+    # FIXED: 결측·검토 대상 처리 후 남은 거래로 매출을 계산한다.
     df["revenue"] = df["price"] * df["quantity"]
+    return df
 
-    # sum()은 NaN을 조용히 건너뛰고, 음수/극단값은 그대로 더한다
-    total = df["revenue"].sum()
-    avg_price = df["price"].mean()
 
-    print(f"총 매출액: {total:,.0f}원")
-    print(f"평균 단가: {avg_price:,.0f}원")
-    # 출력은 그럴듯하지만, 이 숫자를 그대로 믿어도 될까?
+def main():
+    # FIXED: 실행 위치와 관계없이 스크립트 옆의 CSV를 읽는다.
+    input_path = Path(__file__).resolve().parent / "dirty_sales.csv"
+    df = load_and_clean(input_path)
+
+    # FIXED: 전체 원본 매출로 오해하지 않도록 집계 대상을 명시한다.
+    print(f"\n집계 행 수: {len(df)}")
+    print(f"유효 거래 매출 합계: {df['revenue'].sum():,}원")
+
+    if df.empty:
+        print("유효 거래 평균 단가: 계산할 거래 없음")
+    else:
+        print(f"유효 거래 평균 단가: {df['price'].mean():,.2f}원")
+
 
 if __name__ == "__main__":
     main()
